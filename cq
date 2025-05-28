@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Controle de Qualidade - Radiomarcação</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+  <h1>Radiomarcação - Controle de Qualidade</h1>
+
+  <label><input type="radio" name="partes" value="2" checked> Fita cortada em 2 partes</label><br>
+  <label><input type="radio" name="partes" value="4"> Fita cortada em 4 partes</label><br><br>
+
+  <input type="file" id="upload" accept=".xlsx" multiple />
+  <br><br>
+
+  <table border="1" id="tabelaResultados">
+    <thead>
+      <tr><th>Tempo (h)</th><th>Radiomarcação (%)</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    document.getElementById('upload').addEventListener('change', function (e) {
+      const files = Array.from(e.target.files);
+      const resultados = [];
+
+      const tipo = parseInt(document.querySelector('input[name="partes"]:checked').value);
+
+      const processarArquivo = (index) => {
+        if (index >= files.length) {
+          resultados.sort((a, b) => a.tempo - b.tempo);
+          const tbody = document.querySelector("#tabelaResultados tbody");
+          resultados.forEach(r => {
+            const linha = `<tr><td>${r.tempo}</td><td>${r.porcentagem.toFixed(2)}</td></tr>`;
+            tbody.innerHTML += linha;
+          });
+          return;
+        }
+
+        const file = files[index];
+        const reader = new FileReader();
+
+        reader.onload = function (event) {
+          const data = new Uint8Array(event.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheet = workbook.Sheets["Results"];
+
+          if (!sheet) {
+            alert(`A aba "Results" não foi encontrada no arquivo: ${file.name}`);
+            processarArquivo(index + 1);
+            return;
+          }
+
+          const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+          try {
+            let porcentagens = [];
+            if (tipo === 2) {
+              const startIndex = json.findIndex(row => row.includes("Normalized ⁹⁹ᵐTc (CPM)"));
+              const valores = json.slice(startIndex + 1, startIndex + 7).map(r => parseFloat(r[7])).filter(v => !isNaN(v));
+              if (valores.length < 6) throw new Error("Valores insuficientes para 2 partes");
+
+              const origem = [valores[0], valores[2], valores[4]];
+              const final  = [valores[1], valores[3], valores[5]];
+              porcentagens = origem.map((o, i) => (o * 100) / (o + final[i]));
+
+            } else if (tipo === 4) {
+              const pares = [
+                [27, 28, 29, 30],  // Parte 1: origem (L28+29), final (L30+31)
+                [31, 32, 33, 34],  // Parte 2: origem (L32+33), final (L34+35)
+                [35, 36, 37, 38]   // Parte 3: origem (L36+37), final (L38+39)
+              ];
+
+              porcentagens = pares.map(([o1, o2, f1, f2]) => {
+                const origem = parseFloat(json[o1]?.[7]) + parseFloat(json[o2]?.[7]);
+                const final  = parseFloat(json[f1]?.[7]) + parseFloat(json[f2]?.[7]);
+                const total = origem + final;
+                return total > 0 ? (origem * 100) / total : 0;
+              });
+            }
+
+            const media = porcentagens.reduce((a, b) => a + b, 0) / porcentagens.length;
+            const tempo = extrairTempo(file.name, index);
+            resultados.push({ tempo, porcentagem: media });
+            processarArquivo(index + 1);
+
+          } catch (erro) {
+            alert(`Erro ao processar o arquivo ${file.name}: ${erro.message}`);
+            processarArquivo(index + 1);
+          }
+        };
+
+        reader.readAsArrayBuffer(file);
+      };
+
+      const extrairTempo = (nomeArquivo, fallback) => {
+        const match = nomeArquivo.match(/TEMPO\s*(\d+)[hH]?/i);
+        return match ? parseInt(match[1]) : fallback;
+      };
+
+      processarArquivo(0);
+    });
+  </script>
+</body>
+</html>
